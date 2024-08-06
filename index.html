@@ -1,0 +1,110 @@
+<body>
+  <video id="local" autoplay muted></video>
+  <video id="remote" autoplay></video>
+  <button id="openVideo" onclick="start(this)">开启视频</button>
+  <button id="stream" onclick="stream(this)" disabled>
+    视频推流
+  </button>
+  <button id="stopStream" onclick="stopStream()" disabled>
+    结束推流
+  </button>
+
+  <script>
+    // 获取视频元素
+    const local = document.querySelector('video#local'); // 本地视频
+    const remote = document.querySelector('video#remote'); // 远程/推流视频
+
+    let localPeerConnection; // 本地RTCPeerConnection实例
+    let remotePeerConnection; // 远程RTCPeerConnection实例
+
+    // 用于获取用户的音频和视频流，并将其显示在本地video元素上。如果成功获取流，则启用流按钮。
+    function start(e) {
+      e.disabled = true;
+      navigator.mediaDevices
+        .getUserMedia({ audio: true, video: true }) // 请求用户使用其网络摄像头和麦克风的权限
+        .then((stream) => {
+          local.srcObject = stream;
+          document.getElementById('stream').disabled = false;
+        })
+        .catch(() => (e.disabled = false));
+    }
+
+    // 用于实现视频通话功能
+    // 它创建两个RTCPeerConnection实例，一个用于本地，一个用于远程。
+    // 通过添加ICE候选和轨道事件监听器，实现双向通信。
+    // 然后，获取本地流的轨道并添加到本地peer。
+    // 最后开始协商过程，创建要约和回答。
+    function stream(e) {
+      e.disabled = true;
+
+      const config = {};
+      localPeerConnection = new RTCPeerConnection(config); // 创建本地RTCPeerConnection实例
+      remotePeerConnection = new RTCPeerConnection(config); // 创建远程RTCPeerConnection实例
+
+      // 如果在一个对等方中触发了“icecandidate”事件，就将该“ice candidate”添加到另一个对等方。
+      localPeerConnection.addEventListener('icecandidate', (e) =>
+        remotePeerConnection.addIceCandidate(e.candidate)
+      );
+      remotePeerConnection.addEventListener('icecandidate', (e) =>
+        localPeerConnection.addIceCandidate(e.candidate)
+      );
+
+      // 当远程peer检测到连接中的轨道时，将其转发给远程video元素
+      remotePeerConnection.addEventListener('track', (e) => (remote.srcObject = e.streams[0]));
+
+      // 获取本地流的轨道并添加到本地peer
+      local.srcObject
+        .getTracks()
+        .forEach((track) => localPeerConnection.addTrack(track, local.srcObject));
+
+      // 开始握手过程
+      localPeerConnection
+        .createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true }) // 创建要约
+        .then(async (offer) => {
+          await localPeerConnection.setLocalDescription(offer); // 设置本地peer的要约
+          await remotePeerConnection.setRemoteDescription(offer); // 设置远程peer的要约
+          console.log('创建了 offer');
+        })
+        .then(() => remotePeerConnection.createAnswer()) // 创建回答
+        .then(async (answer) => {
+          await remotePeerConnection.setLocalDescription(answer); // 设置远程peer的回答
+          await localPeerConnection.setRemoteDescription(answer); // 设置本地peer的回答
+          console.log('创建了 answer');
+        });
+
+      document.getElementById('stopStream').disabled = false;
+    }
+
+    function stopStream() {
+      // 停止发送媒体流
+      if (localPeerConnection) {
+        localPeerConnection.getSenders().forEach(sender => {
+          sender.track.stop()
+          localPeerConnection.removeTrack(sender); // 移除轨道
+        });
+      }
+
+      // 关闭RTCPeerConnection实例
+      if (localPeerConnection) {
+        localPeerConnection.close();
+        localPeerConnection = null;
+      }
+      if (remotePeerConnection) {
+        remotePeerConnection.close();
+        remotePeerConnection = null;
+      }
+
+      // 释放媒体资源
+      if (local.srcObject) {
+        local.srcObject.getTracks().forEach(track => track.stop());
+        local.srcObject = null;
+      }
+
+      // 禁用结束通话按钮
+      document.getElementById('stopStream').disabled = true;
+
+      document.getElementById('openVideo').disabled = false;
+      document.getElementById('stream').disabled = true;
+    }
+  </script>
+</body>
