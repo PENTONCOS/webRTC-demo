@@ -1,0 +1,71 @@
+<body>
+  <video id="local" autoplay muted></video>
+  <button onclick="start(this)">开启视频</button>
+  <button id="stream" onclick="stream(this)" disabled>视频推流</button>
+
+  <script>
+    const local = document.querySelector("video#local");
+    let peerConnection;
+
+    const channel = new BroadcastChannel("stream-video");
+    channel.onmessage = e => {
+      if (e.data.type === "icecandidate") {
+        peerConnection?.addIceCandidate(e.data.candidate);
+      } else if (e.data.type === "answer") {
+        console.log("收到 answer")
+        peerConnection?.setRemoteDescription(e.data);
+      }
+    }
+
+    // 请求访问用户的摄像头和麦克风
+    function start(e) {
+      e.disabled = true;
+      document.getElementById("stream").disabled = false;
+      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+        .then((stream) => local.srcObject = stream)
+        .catch(error => {
+          console.error("获取媒体流失败:", error);
+          e.disabled = false;
+        });
+    }
+
+    // 开始视频推流
+    function stream(e) {
+      e.disabled = true;
+
+      const config = {};
+      peerConnection = new RTCPeerConnection(config);  // 创建本地RTCPeerConnection实例
+
+      // 添加ICE候选事件监听器
+      peerConnection.addEventListener("icecandidate", e => {
+        let candidate = null;
+
+        // 准备一个可以传递给Broadcast Channel的候选对象
+        if (e.candidate !== null) {
+          candidate = {
+            candidate: e.candidate.candidate,
+            sdpMid: e.candidate.sdpMid,
+            sdpMLineIndex: e.candidate.sdpMLineIndex,
+          };
+        }
+        channel.postMessage({ type: "icecandidate", candidate }); // 发送ICE候选
+      });
+
+      // 添加媒体轨道到RTCPeerConnection
+      local.srcObject.getTracks()
+        .forEach(track => peerConnection.addTrack(track, local.srcObject));
+
+
+      // 创建要约并通过Broadcast Channel发送
+      peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
+        .then(async offer => {
+          await peerConnection.setLocalDescription(offer); // 设置本地peer的要约
+          console.log("创建了 offer, 正在发送...");
+          channel.postMessage({ type: "offer", sdp: offer.sdp }); // 发送要约
+        })
+        .catch(error => {
+          console.error("创建要约失败:", error);
+        });
+    }
+  </script>
+</body>

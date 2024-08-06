@@ -1,0 +1,49 @@
+<body>
+  <video id="remote" autoplay controls></video>
+
+  <script>
+    const remote = document.querySelector("video#remote");
+    let peerConnection;
+
+    const channel = new BroadcastChannel("stream-video");
+    channel.onmessage = e => {
+      if (e.data.type === "icecandidate") {
+        peerConnection?.addIceCandidate(e.data.candidate)
+      } else if (e.data.type === "offer") {
+        console.log("Received offer")
+        handleOffer(e.data)
+      }
+    }
+
+    // 处理接收到的要约
+    function handleOffer(offer) {
+      const config = {};
+      peerConnection = new RTCPeerConnection(config);
+      peerConnection.addEventListener("track", e => remote.srcObject = e.streams[0]);
+      peerConnection.addEventListener("icecandidate", e => {
+        let candidate = null;
+        if (e.candidate !== null) {
+          candidate = {
+            candidate: e.candidate.candidate,
+            sdpMid: e.candidate.sdpMid,
+            sdpMLineIndex: e.candidate.sdpMLineIndex,
+          }
+        }
+        channel.postMessage({ type: "icecandidate", candidate })
+      });
+      peerConnection.setRemoteDescription(offer)
+        .then(() => peerConnection.createAnswer())
+        .then(async answer => {
+          await peerConnection.setLocalDescription(answer);
+          console.log("创建了 answer, 正在发送...")
+          channel.postMessage({
+            type: "answer",
+            sdp: answer.sdp,
+          });
+        })
+        .catch(error => {
+          console.error("设置远程描述或创建回答失败:", error);
+        });
+    }
+  </script>
+</body>
