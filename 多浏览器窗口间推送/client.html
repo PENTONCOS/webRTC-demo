@@ -1,0 +1,51 @@
+<body>
+  <video id="remote" controls></video>
+
+  <script src="./signalserverclass.js"></script> <!-- 引入SignalServer类 -->
+  <script>
+    const remote = document.querySelector("video#remote");
+    let peerConnection;
+
+    // 使用SignalServer类与WebSocket服务器通信
+    const channel = new SignalServer("stream-video");
+    channel.onmessage = e => {
+      if (e.data.type === "icecandidate") {
+        peerConnection?.addIceCandidate(e.data.candidate);
+      } else if (e.data.type === "offer") {
+        console.log("Received offer");
+        handleOffer(e.data);
+      }
+    }
+
+    // 处理接收到的要约
+    function handleOffer(offer) {
+      const config = {};
+      peerConnection = new RTCPeerConnection(config);  // 创建远程RTCPeerConnection实例
+
+      // 当远程peer检测到连接中的轨道时，将其转发给远程video元素
+      peerConnection.addEventListener("track", e => remote.srcObject = e.streams[0]);
+
+      // 添加ICE候选事件监听器
+      peerConnection.addEventListener("icecandidate", e => {
+        let candidate = null;
+        if (e.candidate !== null) {
+          candidate = {
+            candidate: e.candidate.candidate,
+            sdpMid: e.candidate.sdpMid,
+            sdpMLineIndex: e.candidate.sdpMLineIndex,
+          };
+        }
+        channel.postMessage({ type: "icecandidate", candidate }); // 通过SignalServer发送ICE候选
+      });
+
+      // 设置远程描述为接收到的要约
+      peerConnection.setRemoteDescription(offer)
+        .then(() => peerConnection.createAnswer())
+        .then(async answer => {
+          await peerConnection.setLocalDescription(answer); // 设置本地peer的回答
+          console.log("创建了回答，正在发送...");
+          channel.postMessage({ type: "answer", sdp: answer.sdp }); // 通过SignalServer发送回答
+        });
+    }
+  </script>
+</body>
